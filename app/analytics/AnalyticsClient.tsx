@@ -22,6 +22,17 @@ type DashboardData = {
     source: string;
     count: number;
   }[];
+  payments: {
+    available: boolean;
+    limited: boolean;
+    confirmedCount: number;
+    totalReceivedKobo: number;
+    byGift: {
+      giftId: string;
+      label: string;
+      count: number;
+    }[];
+  };
   limited: boolean;
   lastUpdated: string;
 };
@@ -69,6 +80,13 @@ function prettyDate(value: string): string {
 }
 
 const numberFormat = new Intl.NumberFormat("en-NG");
+
+const moneyFormat = new Intl.NumberFormat("en-NG", {
+  style: "currency",
+  currency: "NGN",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
 
 const colors = {
   red: "#A31621",
@@ -740,15 +758,63 @@ export default function AnalyticsClient() {
                   label: "Buy & Deliver clicks",
                   value: data.overview.deliveryClicks,
                 },
+                {
+                  label: "Confirmed contributions",
+                  value: data.payments.available
+                    ? data.payments.confirmedCount
+                    : "Unavailable",
+                },
+                {
+                  label: "Amount received",
+                  value: data.payments.available
+                    ? moneyFormat.format(data.payments.totalReceivedKobo / 100)
+                    : "Unavailable",
+                },
               ].map((stat) => (
                 <article key={stat.label} style={cardStyle}>
                   <p style={labelStyle}>{stat.label}</p>
                   <p style={valueStyle}>
-                    {numberFormat.format(stat.value)}
+                    {typeof stat.value === "number"
+                      ? numberFormat.format(stat.value)
+                      : stat.value}
                   </p>
                 </article>
               ))}
             </section>
+
+            {!data.payments.available && (
+              <div
+                role="alert"
+                style={{
+                  padding: "14px 16px",
+                  background: "#FFF4E5",
+                  color: "#76501C",
+                  borderRadius: "5px",
+                  fontSize: "13px",
+                  marginBottom: "20px",
+                }}
+              >
+                Payment statistics could not be retrieved. Your visitor
+                analytics are still available. Check the Supabase
+                payments table permissions and payment records.
+              </div>
+            )}
+
+            {data.payments.available && data.payments.limited && (
+              <div
+                style={{
+                  padding: "14px 16px",
+                  background: "#FFF4E5",
+                  color: "#76501C",
+                  borderRadius: "5px",
+                  fontSize: "13px",
+                  marginBottom: "20px",
+                }}
+              >
+                Payment statistics reached the 50,000-record limit.
+                Choose a shorter date range for a more complete report.
+              </div>
+            )}
 
             <section style={{ ...cardStyle, marginBottom: "20px" }}>
               <div
@@ -970,3 +1036,4 @@ export default function AnalyticsClient() {
     </main>
   );
 }
+

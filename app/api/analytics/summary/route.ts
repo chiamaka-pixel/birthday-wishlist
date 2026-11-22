@@ -10,6 +10,13 @@ type AnalyticsRow = {
   created_at: string;
 };
 
+type PaymentRow = {
+  amount_kobo: number | string | null;
+  gift_id: string | null;
+  status: string | null;
+  paid_at: string | null;
+};
+
 const GIFT_LABELS: Record<string, string> = {
   macbook: "MacBook",
   bag: "Handbag",
@@ -161,6 +168,75 @@ export async function GET(request: Request) {
       rows.length = MAX_ROWS;
     }
 
+    // Retrieve verified payment records separately from click events.
+    // No donor email addresses or transaction references are selected.
+    const paymentRows: PaymentRow[] = [];
+    let paymentsAvailable = true;
+    let paymentsLimited = false;
+
+    for (let offset = 0; offset <= MAX_ROWS; offset += PAGE_SIZE) {
+      const lastRow = Math.min(
+        offset + PAGE_SIZE - 1,
+        MAX_ROWS
+      );
+
+      const { data: paymentBatch, error: paymentError } = await supabase
+        .from("payments")
+        .select("amount_kobo,gift_id,status,paid_at")
+        .gte("paid_at", startDate)
+        .lte("paid_at", endDate)
+        .order("paid_at", { ascending: false })
+        .range(offset, lastRow);
+
+      if (paymentError) {
+        console.error(
+          "Analytics payment query failed:",
+          paymentError.message
+        );
+
+        paymentsAvailable = false;
+        break;
+      }
+
+      const batch = (paymentBatch ?? []) as PaymentRow[];
+      paymentRows.push(...batch);
+
+      if (batch.length < lastRow - offset + 1) {
+        break;
+      }
+
+      if (offset + PAGE_SIZE > MAX_ROWS) {
+        paymentsLimited = true;
+      }
+    }
+
+    // Accept common successful payment status labels.
+    const successfulPayments = paymentRows.filter((payment) =>
+      ["success", "successful", "paid", "completed", "succeeded"].includes(
+        (payment.status ?? "").toLowerCase()
+      )
+    );
+
+    const totalReceivedKobo = successfulPayments.reduce(
+      (total, payment) => {
+        const amount = Number(payment.amount_kobo);
+
+        return total + (
+          Number.isFinite(amount) && amount > 0 ? amount : 0
+        );
+      },
+      0
+    );
+
+    const paymentGiftCounts: Record<string, number> = {};
+
+    for (const payment of successfulPayments) {
+      if (payment.gift_id) {
+        paymentGiftCounts[payment.gift_id] =
+          (paymentGiftCounts[payment.gift_id] ?? 0) + 1;
+      }
+    }
+
     const pageViews = rows.filter(
       (row) => row.event_name === "page_view"
     );
@@ -254,6 +330,19 @@ export async function GET(request: Request) {
         dailyViews,
         popularGifts,
         trafficSources,
+        payments: {
+          available: paymentsAvailable,
+          limited: paymentsLimited,
+          confirmedCount: successfulPayments.length,
+          totalReceivedKobo,
+          byGift: Object.entries(paymentGiftCounts)
+            .map(([giftId, count]) => ({
+              giftId,
+              label: GIFT_LABELS[giftId] ?? giftId,
+              count,
+            }))
+            .sort((a, b) => b.count - a.count),
+        },
         limited,
         lastUpdated: new Date().toISOString(),
       },
@@ -270,3 +359,4 @@ export async function GET(request: Request) {
     );
   }
 }
+
