@@ -31,6 +31,7 @@ type DashboardData = {
       giftId: string;
       label: string;
       count: number;
+      totalReceivedKobo: number;
     }[];
   };
   limited: boolean;
@@ -782,6 +783,136 @@ export default function AnalyticsClient() {
               ))}
             </section>
 
+            {data.payments.available && (
+              <section
+                style={{
+                  ...cardStyle,
+                  marginBottom: "20px",
+                }}
+              >
+                <div
+                  style={{
+                    marginBottom: "20px",
+                  }}
+                >
+                  <h2 style={{ fontSize: "18px", marginBottom: "6px" }}>
+                    Confirmed contributions by gift
+                  </h2>
+
+                  <p
+                    style={{
+                      color: colors.muted,
+                      fontSize: "13px",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    Successful payments grouped by wishlist item.
+                    Amounts are based on verified payment records.
+                  </p>
+                </div>
+
+                {data.payments.byGift.length === 0 ? (
+                  <p
+                    style={{
+                      color: colors.muted,
+                      fontSize: "14px",
+                    }}
+                  >
+                    No successful contributions were recorded for
+                    this date range.
+                  </p>
+                ) : (
+                  <div style={{ display: "grid", gap: "0" }}>
+                    {data.payments.byGift.map((gift) => {
+                      const maximum = Math.max(
+                        1,
+                        ...data.payments.byGift.map(
+                          (item) => item.totalReceivedKobo
+                        )
+                      );
+
+                      const percentage =
+                        (gift.totalReceivedKobo / maximum) * 100;
+
+                      return (
+                        <div
+                          key={gift.giftId}
+                          style={{
+                            padding: "16px 0",
+                            borderBottom: `1px solid ${colors.border}`,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "start",
+                              flexWrap: "wrap",
+                              gap: "12px",
+                            }}
+                          >
+                            <div>
+                              <p
+                                style={{
+                                  fontSize: "14px",
+                                  fontWeight: 700,
+                                  marginBottom: "5px",
+                                }}
+                              >
+                                {gift.label}
+                              </p>
+
+                              <p
+                                style={{
+                                  color: colors.muted,
+                                  fontSize: "12px",
+                                }}
+                              >
+                                {gift.count} confirmed{" "}
+                                {gift.count === 1
+                                  ? "contribution"
+                                  : "contributions"}
+                              </p>
+                            </div>
+
+                            <strong
+                              style={{
+                                fontSize: "16px",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {moneyFormat.format(
+                                gift.totalReceivedKobo / 100
+                              )}
+                            </strong>
+                          </div>
+
+                          <div
+                            style={{
+                              height: "6px",
+                              marginTop: "12px",
+                              background: "#EEE9E5",
+                              borderRadius: "10px",
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${percentage}%`,
+                                height: "100%",
+                                background: colors.red,
+                                borderRadius: "10px",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
             {!data.payments.available && (
               <div
                 role="alert"
@@ -1036,4 +1167,5 @@ export default function AnalyticsClient() {
     </main>
   );
 }
+
 

@@ -228,13 +228,27 @@ export async function GET(request: Request) {
       0
     );
 
-    const paymentGiftCounts: Record<string, number> = {};
+    const paymentGiftTotals: Record<
+      string,
+      { count: number; totalReceivedKobo: number }
+    > = {};
 
     for (const payment of successfulPayments) {
-      if (payment.gift_id) {
-        paymentGiftCounts[payment.gift_id] =
-          (paymentGiftCounts[payment.gift_id] ?? 0) + 1;
-      }
+      if (!payment.gift_id) continue;
+
+      const amount = Number(payment.amount_kobo);
+      const validAmount =
+        Number.isFinite(amount) && amount > 0 ? amount : 0;
+
+      const current = paymentGiftTotals[payment.gift_id] ?? {
+        count: 0,
+        totalReceivedKobo: 0,
+      };
+
+      paymentGiftTotals[payment.gift_id] = {
+        count: current.count + 1,
+        totalReceivedKobo: current.totalReceivedKobo + validAmount,
+      };
     }
 
     const pageViews = rows.filter(
@@ -335,13 +349,17 @@ export async function GET(request: Request) {
           limited: paymentsLimited,
           confirmedCount: successfulPayments.length,
           totalReceivedKobo,
-          byGift: Object.entries(paymentGiftCounts)
-            .map(([giftId, count]) => ({
+          byGift: Object.entries(paymentGiftTotals)
+            .map(([giftId, totals]) => ({
               giftId,
               label: GIFT_LABELS[giftId] ?? giftId,
-              count,
+              count: totals.count,
+              totalReceivedKobo: totals.totalReceivedKobo,
             }))
-            .sort((a, b) => b.count - a.count),
+            .sort(
+              (a, b) =>
+                b.totalReceivedKobo - a.totalReceivedKobo
+            ),
         },
         limited,
         lastUpdated: new Date().toISOString(),
@@ -359,4 +377,5 @@ export async function GET(request: Request) {
     );
   }
 }
+
 
