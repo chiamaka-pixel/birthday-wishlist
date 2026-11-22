@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Category =
   | "tech"
@@ -84,6 +84,18 @@ export default function BirthdayWishlistPage() {
     () => gifts.filter((gift) => category === "all" || gift.category === category),
     [category],
   );
+useEffect(() => {
+  function handlePageShow() {
+    setBusy(false);
+  }
+
+  window.addEventListener("pageshow", handlePageShow);
+
+  return () => {
+    window.removeEventListener("pageshow", handlePageShow);
+  };
+}, []);
+
 
   function notify(message: string) {
     setNotice(message);
