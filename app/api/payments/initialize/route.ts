@@ -1,4 +1,3 @@
-
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
@@ -44,6 +43,9 @@ export async function POST(request: Request) {
       email?: string;
     } = await request.json();
 
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
+
     if (
       !giftId ||
       !allowedGiftIds.has(giftId) ||
@@ -51,9 +53,7 @@ export async function POST(request: Request) {
       !Number.isSafeInteger(amount) ||
       amount < 100 ||
       amount > 10_000_000 ||
-      typeof email !== "string" ||
-      email.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
     ) {
       return NextResponse.json(
         { error: "Please provide a valid gift, amount and email." },
@@ -66,19 +66,22 @@ export async function POST(request: Request) {
     const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
 
-    console.error("PAYMENT CONFIG CHECK:", {
-      PAYSTACK_SECRET_KEY: !!paystackKey,
-      NEXT_PUBLIC_SUPABASE_URL: !!supabaseUrl,
-      SUPABASE_SECRET_KEY: !!supabaseSecret,
-      NEXT_PUBLIC_SITE_URL: !!siteUrl,
-    });
-
     if (!paystackKey || !supabaseUrl || !supabaseSecret || !siteUrl) {
+      console.error("Payment configuration is incomplete.");
+
       return NextResponse.json(
         { error: "Payment service is not configured." },
         { status: 500 }
       );
     }
+
+    // Build the exact destination, regardless of trailing slashes.
+    const callbackUrl = new URL(
+      "/payment/callback",
+      siteUrl
+    ).toString();
+
+    console.info("PAYSTACK CALLBACK URL:", callbackUrl);
 
     const supabase = createClient(supabaseUrl, supabaseSecret);
 
@@ -90,7 +93,7 @@ export async function POST(request: Request) {
       .insert({
         reference,
         gift_id: giftId,
-        email: email.toLowerCase().trim(),
+        email: normalizedEmail,
         amount_kobo: amountKobo,
         status: "pending",
       });
@@ -113,11 +116,11 @@ export async function POST(request: Request) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: email.toLowerCase().trim(),
+          email: normalizedEmail,
           amount: amountKobo,
           currency: "NGN",
           reference,
-          callback_url: `${siteUrl.replace(/\/$/, "")}/payment/callback`,
+          callback_url: callbackUrl,
           metadata: {
             gift_id: giftId,
             custom_fields: [
@@ -134,8 +137,15 @@ export async function POST(request: Request) {
 
     const result = await paystackResponse.json();
 
-    if (!paystackResponse.ok || !result.status) {
-      console.error("Paystack initialization failed:", result);
+    if (
+      !paystackResponse.ok ||
+      !result.status ||
+      !result.data?.authorization_url
+    ) {
+      console.error("Paystack initialization failed:", {
+        status: paystackResponse.status,
+        message: result.message,
+      });
 
       await supabase
         .from("payment_intents")
@@ -150,7 +160,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       authorizationUrl: result.data.authorization_url,
-      reference: result.data.reference,
+      reference: result.data.reference || reference,
     });
   } catch (error) {
     console.error("Payment initialization error:", error);
