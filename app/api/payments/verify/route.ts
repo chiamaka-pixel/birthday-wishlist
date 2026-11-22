@@ -39,13 +39,15 @@ export async function POST(request: Request) {
       .single();
 
     if (intentError || !intent) {
+      console.error("Payment intent lookup failed:", intentError?.message);
+
       return NextResponse.json(
         { error: "Payment record not found." },
         { status: 404 }
       );
     }
 
-    // Verify the transaction directly with Paystack.
+    // Verify directly with Paystack.
     const response = await fetch(
       `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
       {
@@ -60,6 +62,8 @@ export async function POST(request: Request) {
     const result = await response.json();
 
     if (!response.ok || !result.status || !result.data) {
+      console.error("Paystack verification response:", result);
+
       return NextResponse.json(
         { error: "Could not verify this payment yet." },
         { status: 502 }
@@ -68,7 +72,7 @@ export async function POST(request: Request) {
 
     const transaction = result.data;
 
-    // Check every important payment detail.
+    // Validate the transaction against the original request.
     const validPayment =
       transaction.status === "success" &&
       transaction.reference === intent.reference &&
@@ -79,13 +83,24 @@ export async function POST(request: Request) {
       typeof transaction.paid_at === "string";
 
     if (!validPayment) {
+      console.error("Payment validation failed:", {
+        status: transaction.status,
+        referenceMatches: transaction.reference === intent.reference,
+        amountMatches: transaction.amount === intent.amount_kobo,
+        currency: transaction.currency,
+        emailMatches:
+          transaction.customer?.email?.toLowerCase() ===
+          intent.email.toLowerCase(),
+      });
+
       return NextResponse.json(
         { error: "Payment has not been confirmed." },
         { status: 400 }
       );
     }
 
-    // Save only verified successful payments.
+    // Save the verified payment.
+    // Existing records are updated rather than ignored.
     const { error: paymentError } = await supabase
       .from("payments")
       .upsert(
@@ -99,23 +114,38 @@ export async function POST(request: Request) {
         },
         {
           onConflict: "reference",
-          ignoreDuplicates: true,
         }
       );
 
     if (paymentError) {
-      console.error("Verified payment could not be saved:", paymentError.message);
+      console.error(
+        "Verified payment could not be saved:",
+        paymentError.message
+      );
 
       return NextResponse.json(
-        { error: "Payment was verified but could not be recorded. Please contact us." },
+        { error: "Payment was verified but could not be recorded." },
         { status: 500 }
       );
     }
 
-    await supabase
+    // Update the original payment intent.
+    const { error: updateError } = await supabase
       .from("payment_intents")
       .update({ status: "success" })
       .eq("reference", reference);
+
+    if (updateError) {
+      console.error(
+        "Payment intent status update failed:",
+        updateError.message
+      );
+
+      return NextResponse.json(
+        { error: "Payment was saved but its confirmation status could not be updated." },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
