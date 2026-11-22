@@ -66,6 +66,13 @@ export async function POST(request: Request) {
     const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
 
+    console.error("PAYMENT CONFIG CHECK:", {
+      PAYSTACK_SECRET_KEY: !!paystackKey,
+      NEXT_PUBLIC_SUPABASE_URL: !!supabaseUrl,
+      SUPABASE_SECRET_KEY: !!supabaseSecret,
+      NEXT_PUBLIC_SITE_URL: !!siteUrl,
+    });
+
     if (!paystackKey || !supabaseUrl || !supabaseSecret || !siteUrl) {
       return NextResponse.json(
         { error: "Payment service is not configured." },
@@ -128,6 +135,8 @@ export async function POST(request: Request) {
     const result = await paystackResponse.json();
 
     if (!paystackResponse.ok || !result.status) {
+      console.error("Paystack initialization failed:", result);
+
       await supabase
         .from("payment_intents")
         .update({ status: "failed" })
