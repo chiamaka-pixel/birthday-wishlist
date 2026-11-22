@@ -1,11 +1,31 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
-:root { color-scheme: light; }
+@theme inline {
+  --font-sans: "Manrope", sans-serif;
+  --font-serif: "Manrope", sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --page-bg: #F7F4F1;
+  --red: #A31621;
+  --red-deep: #8E101B;
+  --black: #111111;
+  --ivory: #F7F4F1;
+  --surface: #EEE9E4;
+  --text-muted: #655F5B;
+}
+
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; background: #fff8f5; font-family: "Plus Jakarta Sans", sans-serif; }
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--black);
+  font-family: "Manrope", sans-serif;
+}
 button, input, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
-::selection { background: #ffdcbd; color: #251911; }
+::selection { background: #A31621; color: #FFFFFF; }
 ::-webkit-scrollbar { width: 0; height: 0; }
