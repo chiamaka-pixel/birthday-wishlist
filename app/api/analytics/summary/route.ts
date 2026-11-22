@@ -1,13 +1,8 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { isAnalyticsAuthenticated } from "@/lib/analytics-auth";
 
-export const runtime = "nodejs";
-
-const MAX_EVENTS = 50_000;
-const PAGE_SIZE = 1000;
-
-type AnalyticsEvent = {
+type AnalyticsRow = {
   visitor_id: string;
   event_name: string;
   gift_id: string | null;
@@ -15,25 +10,25 @@ type AnalyticsEvent = {
   created_at: string;
 };
 
-const giftNames: Record<string, string> = {
+const GIFT_LABELS: Record<string, string> = {
   macbook: "MacBook",
   bag: "Handbag",
   perfumes: "Perfumes",
-  shoes: "New shoes",
-  slippers: "New slippers",
-  bra: "Big-size bra",
+  shoes: "Shoes",
+  slippers: "Slippers",
+  bra: "Bra",
   clothes: "Clothes",
   "new-hair": "New hair",
   nails: "Nails",
   clement: "Clement Isong",
   azikiwe: "Nnamdi Azikiwe",
-  "item-7": "Food from Item 7 Go",
-  turkey: "Molabat peppered turkey",
-  yam: "Big tubers of yam",
-  eggs: "A crate of eggs",
-  "rice-stew": "Rice, stew and soup ingredients",
-  pots: "Set of non-stick pots",
-  gas: "Cooking gas refill",
+  "item-7": "Item 7",
+  turkey: "Peppered turkey",
+  yam: "Yam",
+  eggs: "Eggs",
+  "rice-stew": "Rice and stew ingredients",
+  pots: "Non-stick pots",
+  gas: "Gas refill",
   gym: "Gym membership",
   "gift-cards": "Gift cards",
   surprises: "Surprises",
@@ -42,202 +37,236 @@ const giftNames: Record<string, string> = {
   "opay-loan": "OPay loan repayment",
 };
 
-export async function GET() {
-  try {
-    const authenticated = await isAnalyticsAuthenticated();
+function isValidDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
 
-    if (!authenticated) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.toISOString().slice(0, 10) === value
+  );
+}
+
+function lagosDateKey(value: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  return `${year}-${month}-${day}`;
+}
+
+export async function GET(request: Request) {
+  try {
+    if (!(await isAnalyticsAuthenticated())) {
       return NextResponse.json(
-        { error: "Please log in to view analytics." },
-        { status: 401 },
+        { error: "Authentication required." },
+        { status: 401 }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const from = searchParams.get("from") ?? "";
+    const to = searchParams.get("to") ?? "";
+
+    if (!isValidDate(from) || !isValidDate(to) || from > to) {
+      return NextResponse.json(
+        { error: "Please provide a valid date range." },
+        { status: 400 }
+      );
+    }
+
+    const dayDifference =
+      (Date.parse(`${to}T00:00:00Z`) -
+        Date.parse(`${from}T00:00:00Z`)) /
+      86400000;
+
+    if (dayDifference > 365) {
+      return NextResponse.json(
+        { error: "Please select a date range of 366 days or less." },
+        { status: 400 }
       );
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
+    const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY;
 
-    if (!supabaseUrl || !supabaseSecret) {
-      console.error("Analytics Supabase configuration is missing.");
-
-      return NextResponse.json(
-        { error: "Analytics service is not configured." },
-        { status: 500 },
-      );
+    if (!supabaseUrl || !supabaseSecretKey) {
+      throw new Error("Analytics database configuration is missing.");
     }
 
-    const supabase = createClient(supabaseUrl, supabaseSecret, {
+    const supabase = createClient(supabaseUrl, supabaseSecretKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
       },
     });
 
-    const startDate = new Date();
-    startDate.setUTCDate(startDate.getUTCDate() - 29);
+    const startDate = new Date(
+      `${from}T00:00:00.000+01:00`
+    ).toISOString();
 
-    const events: AnalyticsEvent[] = [];
+    const endDate = new Date(
+      `${to}T23:59:59.999+01:00`
+    ).toISOString();
 
-    for (let offset = 0; offset < MAX_EVENTS; offset += PAGE_SIZE) {
+    const PAGE_SIZE = 1000;
+    const MAX_ROWS = 50000;
+    const rows: AnalyticsRow[] = [];
+
+    for (let offset = 0; offset <= MAX_ROWS; offset += PAGE_SIZE) {
+      const lastRow = Math.min(
+        offset + PAGE_SIZE - 1,
+        MAX_ROWS
+      );
+
       const { data, error } = await supabase
         .from("analytics_events")
         .select("visitor_id,event_name,gift_id,source,created_at")
-        .gte("created_at", startDate.toISOString())
+        .gte("created_at", startDate)
+        .lte("created_at", endDate)
         .order("created_at", { ascending: false })
-        .range(offset, offset + PAGE_SIZE - 1);
+        .range(offset, lastRow);
 
       if (error) {
-        console.error("Analytics database query failed:", error.message);
+        console.error(
+          "Analytics database query failed:",
+          error.message
+        );
 
         return NextResponse.json(
           { error: "Could not load analytics data." },
-          { status: 500 },
+          { status: 500 }
         );
       }
 
-      const batch = (data ?? []) as AnalyticsEvent[];
+      const batch = (data ?? []) as AnalyticsRow[];
+      rows.push(...batch);
 
-      events.push(...batch);
-
-      if (batch.length < PAGE_SIZE) break;
+      if (batch.length < lastRow - offset + 1) {
+        break;
+      }
     }
 
-    const limited = events.length >= MAX_EVENTS;
+    const limited = rows.length > MAX_ROWS;
 
-    const pageViewEvents = events.filter(
-      (event) => event.event_name === "page_view",
+    if (limited) {
+      rows.length = MAX_ROWS;
+    }
+
+    const pageViews = rows.filter(
+      (row) => row.event_name === "page_view"
     );
 
     const uniqueVisitors = new Set(
-      pageViewEvents.map((event) => event.visitor_id),
-    );
+      pageViews.map((row) => row.visitor_id)
+    ).size;
 
-    const giftStats = new Map<
-      string,
-      {
-        giftId: string;
-        name: string;
-        views: number;
-        contributionClicks: number;
-        deliveryClicks: number;
-      }
-    >();
+    const giftViews = rows.filter(
+      (row) => row.event_name === "gift_view"
+    ).length;
 
-    for (const event of events) {
-      if (!event.gift_id) continue;
+    const contributionClicks = rows.filter(
+      (row) => row.event_name === "contribute_click"
+    ).length;
 
-      if (!giftStats.has(event.gift_id)) {
-        giftStats.set(event.gift_id, {
-          giftId: event.gift_id,
-          name: giftNames[event.gift_id] ?? event.gift_id,
-          views: 0,
-          contributionClicks: 0,
-          deliveryClicks: 0,
-        });
-      }
+    const deliveryClicks = rows.filter(
+      (row) => row.event_name === "buy_deliver_click"
+    ).length;
 
-      const gift = giftStats.get(event.gift_id)!;
+    // Daily page views.
+    const dailyCounts: Record<string, number> = {};
 
-      if (event.event_name === "gift_view") {
-        gift.views += 1;
-      }
-
-      if (event.event_name === "contribute_click") {
-        gift.contributionClicks += 1;
-      }
-
-      if (event.event_name === "buy_deliver_click") {
-        gift.deliveryClicks += 1;
-      }
+    for (const row of pageViews) {
+      const dateKey = lagosDateKey(row.created_at);
+      dailyCounts[dateKey] = (dailyCounts[dateKey] ?? 0) + 1;
     }
 
-    const dailyCounts = new Map<string, number>();
+    const dailyViews: { date: string; views: number }[] = [];
+    const cursor = new Date(`${from}T00:00:00.000Z`);
+    const lastDate = new Date(`${to}T00:00:00.000Z`);
 
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    while (cursor <= lastDate) {
+      const key = cursor.toISOString().slice(0, 10);
 
-    const dailyViews = Array.from({ length: 30 }, (_, index) => {
-      const date = new Date(today);
-      date.setUTCDate(date.getUTCDate() - (29 - index));
-
-      const key = date.toISOString().slice(0, 10);
-
-      dailyCounts.set(key, 0);
-
-      return {
+      dailyViews.push({
         date: key,
-        label: new Intl.DateTimeFormat("en-NG", {
-          day: "numeric",
-          month: "short",
-          timeZone: "UTC",
-        }).format(date),
-        views: 0,
-      };
-    });
+        views: dailyCounts[key] ?? 0,
+      });
 
-    for (const event of pageViewEvents) {
-      const key = new Date(event.created_at).toISOString().slice(0, 10);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
 
-      if (dailyCounts.has(key)) {
-        dailyCounts.set(key, (dailyCounts.get(key) ?? 0) + 1);
+    // Most interacted-with wishlist items.
+    const giftCounts: Record<string, number> = {};
+
+    for (const row of rows) {
+      if (
+        row.gift_id &&
+        ["gift_view", "contribute_click", "buy_deliver_click"].includes(
+          row.event_name
+        )
+      ) {
+        giftCounts[row.gift_id] =
+          (giftCounts[row.gift_id] ?? 0) + 1;
       }
     }
 
-    for (const day of dailyViews) {
-      day.views = dailyCounts.get(day.date) ?? 0;
-    }
-
-    const sourceCounts = new Map<string, number>();
-
-    for (const event of pageViewEvents) {
-      const source = event.source || "unknown";
-
-      sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
-    }
-
-    const trafficSources = Array.from(sourceCounts.entries())
-      .map(([source, count]) => ({ source, count }))
+    const popularGifts = Object.entries(giftCounts)
+      .map(([giftId, count]) => ({
+        giftId,
+        label: GIFT_LABELS[giftId] ?? giftId,
+        count,
+      }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-
-    const popularGifts = Array.from(giftStats.values())
-      .sort(
-        (a, b) =>
-          b.contributionClicks - a.contributionClicks ||
-          b.views - a.views ||
-          b.deliveryClicks - a.deliveryClicks,
-      )
       .slice(0, 10);
 
-    return NextResponse.json({
-      period: "Last 30 days",
+    // Traffic sources, counted from page views.
+    const sourceCounts: Record<string, number> = {};
 
-      overview: {
-        totalPageViews: pageViewEvents.length,
-        uniqueVisitors: uniqueVisitors.size,
-        giftInteractions: events.filter(
-          (event) => event.event_name === "gift_view",
-        ).length,
-        contributionClicks: events.filter(
-          (event) => event.event_name === "contribute_click",
-        ).length,
-        deliveryClicks: events.filter(
-          (event) => event.event_name === "buy_deliver_click",
-        ).length,
+    for (const row of pageViews) {
+      const source = row.source?.trim() || "direct";
+      sourceCounts[source] = (sourceCounts[source] ?? 0) + 1;
+    }
+
+    const trafficSources = Object.entries(sourceCounts)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    return NextResponse.json(
+      {
+        period: { from, to },
+        overview: {
+          pageViews: pageViews.length,
+          uniqueVisitors,
+          giftViews,
+          contributionClicks,
+          deliveryClicks,
+        },
+        dailyViews,
+        popularGifts,
+        trafficSources,
+        limited,
+        lastUpdated: new Date().toISOString(),
       },
-
-      dailyViews,
-      popularGifts,
-      trafficSources,
-
-      limited,
-      lastUpdated: new Date().toISOString(),
-    });
+      {
+        headers: { "Cache-Control": "no-store" },
+      }
+    );
   } catch (error) {
     console.error("Analytics summary error:", error);
 
     return NextResponse.json(
-      { error: "Unable to load the analytics dashboard." },
-      { status: 500 },
+      { error: "Could not load analytics data." },
+      { status: 500 }
     );
   }
 }
